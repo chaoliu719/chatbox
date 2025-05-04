@@ -16,6 +16,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import AddIcon from '@mui/icons-material/AddCircleOutline'
 import { Session } from 'src/shared/types'
 import { ConfirmDeleteMenuItem } from './ConfirmDeleteButton'
+import { getParentMessageId } from '../stores/sessionActions'
 
 const sessionScrollPositionCache = new Map<string, StateSnapshot>()
 
@@ -120,13 +121,21 @@ export default function MessageList(props: { className?: string; currentSession:
                   collapseThreshold={msg.role === 'system' ? 150 : undefined}
                   preferCollapsedCodeBlock={index < currentMessageList.length - 10}
                 />
-                {currentSession.messageForksHash?.[msg.id] && (
-                  <ForkNav
-                    key={`fork_nav_${msg.id}`}
-                    msgId={msg.id}
-                    forks={currentSession.messageForksHash?.[msg.id]}
-                  />
-                )}
+                {(() => {
+                  const parentInfo = getParentMessageId(currentMessageList, msg.id)
+                  const parentId = parentInfo ? parentInfo[1] : undefined
+                  const forks = parentId ? currentSession.messageForksHash?.[parentId] : undefined
+                  if (forks) {
+                    return (
+                      <ForkNav
+                        key={`fork_nav_${msg.id}`}
+                        msgId={msg.id}
+                        forks={forks}
+                      />
+                    )
+                  }
+                  return null
+                })()}
               </>
               // </div>
             )

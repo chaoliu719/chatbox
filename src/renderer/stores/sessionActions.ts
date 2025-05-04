@@ -836,11 +836,7 @@ export async function generateMore(sessionId: string, msgId: string, options?: {
   await generate(sessionId, newAssistantMsg, options)
 }
 
-export async function generateMoreInNewFork(sessionId: string, msgId: string) {
-  await createNewFork(msgId)
-  await generateMore(sessionId, msgId)
-}
-
+// 只针对用户消息，重新生成
 export async function regenerateInNewFork(sessionId: string, msg: Message, options?: { webBrowsing?: boolean }) {
   const messageList = getCurrentMessages()
   const messageIndex = messageList.findIndex((m) => m.id === msg.id)
@@ -851,6 +847,7 @@ export async function regenerateInNewFork(sessionId: string, msg: Message, optio
     return
   }
   const forkMessage = messageList[previousMessageIndex]
+  // 这个也用了 fork，但是不需要保存信息，所以 fork 和保存分开。
   await createNewFork(forkMessage.id)
   return generateMore(sessionId, forkMessage.id, { webBrowsing: options?.webBrowsing })
 }
@@ -1148,6 +1145,18 @@ export async function exportCurrentSessionChat(content: ExportChatScope, format:
   await exportChat(currentSession, content, format)
 }
 
+export function getParentMessageId(data: Message[], messageId: string): [number, string] | undefined {
+  const messageIndex = data.findIndex((m) => m.id === messageId)
+  if (messageIndex < 0) {
+    return undefined
+  }
+  const parentMessageIndex = messageIndex - 1
+  if (parentMessageIndex < 0) {
+    return undefined
+  }
+  return [parentMessageIndex, data[parentMessageIndex].id]
+}
+
 export async function createNewFork(forkMessageId: string) {
   const store = getDefaultStore()
   const currentSession = store.get(atoms.currentSessionAtom)
@@ -1157,11 +1166,13 @@ export async function createNewFork(forkMessageId: string) {
   const messageForksHash = currentSession.messageForksHash
 
   const updateFn = (data: Message[]): { data: Message[]; updated: boolean } => {
-    const forkMessageIndex = data.findIndex((m) => m.id === forkMessageId)
-    if (forkMessageIndex < 0) {
+    const parentInfo = getParentMessageId(data, forkMessageId)
+    if (!parentInfo) {
       return { data, updated: false }
     }
-    const forks = messageForksHash[forkMessageId] || {
+    const [parentMessageIndex, parentMessageId] = parentInfo
+
+    const forks = messageForksHash[parentMessageId] || {
       position: 0,
       lists: [
         {
@@ -1171,8 +1182,8 @@ export async function createNewFork(forkMessageId: string) {
       ],
       createdAt: Date.now(),
     }
-    // 下方消息存储到当前游标位置
-    const backupMessages = data.slice(forkMessageIndex + 1)
+    // 获取当前消息及其后续消息作为新分支
+    const backupMessages = data.slice(parentMessageIndex + 1)
     if (backupMessages.length === 0) {
       return { data, updated: false }
     }
@@ -1187,8 +1198,9 @@ export async function createNewFork(forkMessageId: string) {
     })
     forks.position = forks.lists.length - 1
 
-    messageForksHash[forkMessageId] = forks
-    data = data.slice(0, forkMessageIndex + 1)
+    messageForksHash[parentMessageId] = forks
+    // 这里少保留一条，然后把原来的消息 clone 完插入到消息列表中
+    data = data.slice(0, parentMessageIndex + 1).concat(cloneMessage(backupMessages[0]))
 
     // 限制分叉数量，超过20个则清理掉最旧
     const keys = Object.keys(messageForksHash)
@@ -1236,27 +1248,30 @@ export async function switchFork(forkMessageId: string, direction: 'next' | 'pre
   const messageForksHash = currentSession.messageForksHash
 
   const updateFn = (data: Message[]): { data: Message[]; updated: boolean } => {
-    const forks = messageForksHash[forkMessageId]
-    if (forks.lists.length === 0) {
+    const parentInfo = getParentMessageId(data, forkMessageId)
+    if (!parentInfo) {
       return { data, updated: false }
     }
-    const forkMessageIndex = data.findIndex((m) => m.id === forkMessageId)
-    if (forkMessageIndex < 0) {
+    const [parentMessageIndex, parentMessageId] = parentInfo
+
+    const forks = messageForksHash[parentMessageId]
+    if (!forks || forks.lists.length === 0) {
       return { data, updated: false }
     }
+
     const newPosition =
       direction === 'next'
         ? (forks.position + 1) % forks.lists.length
         : (forks.position - 1 + forks.lists.length) % forks.lists.length
     // 当前被分叉的消息存储在当前的游标位置
-    forks.lists[forks.position].messages = data.slice(forkMessageIndex + 1)
+    forks.lists[forks.position].messages = data.slice(parentMessageIndex + 1)
     // 当前消息列表中移除被分叉的消息，并且添加新的游标位置的消息
-    data = data.slice(0, forkMessageIndex + 1).concat(forks.lists[newPosition].messages)
+    data = data.slice(0, parentMessageIndex + 1).concat(forks.lists[newPosition].messages)
     // 更新游标位置
     forks.position = newPosition
     // 清空新的游标位置的消息（因为已经在主分支了，所以清理以节省空间）
     forks.lists[newPosition].messages = []
-    messageForksHash[forkMessageId] = forks
+    messageForksHash[parentMessageId] = forks
     return { data, updated: true }
   }
 
@@ -1298,28 +1313,30 @@ export async function deleteFork(forkMessageId: string) {
   const messageForksHash = currentSession.messageForksHash
 
   const updateFn = (data: Message[]): { data: Message[]; updated: boolean } => {
-    const forkMessageIndex = data.findIndex((m) => m.id === forkMessageId)
-    if (forkMessageIndex < 0) {
-      return { data, updated: false } // 只有找不到消息才返回 false
+    const parentInfo = getParentMessageId(data, forkMessageId)
+    if (!parentInfo) {
+      return { data, updated: false }
     }
-    const forks = messageForksHash[forkMessageId]
+    const [parentMessageIndex, parentMessageId] = parentInfo
+
+    const forks = messageForksHash[parentMessageId]
     if (!forks) {
       return { data, updated: true }
     }
     // 删除消息列表中当前分叉的消息
-    data = data.slice(0, forkMessageIndex + 1)
+    data = data.slice(0, parentMessageIndex + 2)
     // 清理当前分叉
     forks.lists = [...forks.lists.slice(0, forks.position), ...forks.lists.slice(forks.position + 1)]
     forks.position = Math.min(forks.position, forks.lists.length - 1)
     // 如果当前消息已经没有分支，则删除整个消息分叉信息
     if (forks.lists.length === 0) {
-      delete messageForksHash[forkMessageId]
+      delete messageForksHash[parentMessageId]
       return { data, updated: true }
     }
     // 将当前游标位置的消息添加到主消息列表中
     data = data.concat(forks.lists[forks.position].messages)
     forks.lists[forks.position].messages = []
-    messageForksHash[forkMessageId] = forks
+    messageForksHash[parentMessageId] = forks
     return { data, updated: true }
   }
 
@@ -1360,11 +1377,13 @@ export async function expandFork(forkMessageId: string) {
   const messageForksHash = currentSession.messageForksHash
 
   const updateFn = (data: Message[]): { data: Message[]; updated: boolean } => {
-    const forkMessageIndex = data.findIndex((m) => m.id === forkMessageId)
-    if (forkMessageIndex < 0) {
-      return { data, updated: false } // 只有找不到消息才返回 false
+    const parentInfo = getParentMessageId(data, forkMessageId)
+    if (!parentInfo) {
+      return { data, updated: false }
     }
-    const forks = messageForksHash[forkMessageId]
+    const [parentMessageIndex, parentMessageId] = parentInfo
+
+    const forks = messageForksHash[parentMessageId]
     if (!forks) {
       return { data, updated: true }
     }
@@ -1373,7 +1392,7 @@ export async function expandFork(forkMessageId: string) {
       data = data.concat(list.messages)
     }
     // 删除当前消息的所有分叉
-    delete messageForksHash[forkMessageId]
+    delete messageForksHash[parentMessageId]
     return { data, updated: true }
   }
 

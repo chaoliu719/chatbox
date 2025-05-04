@@ -44,12 +44,15 @@ const MessageEdit = NiceModal.create((props: { sessionId: string; msg: Message }
     sessionActions.modifyMessage(sessionId, msg, true)
     onClose()
   }
-  const onSaveAndReply = () => {
+  const onSaveAndReply = async () => {
     if (!msg || !sessionId) {
       return
     }
-    onSave()
-    sessionActions.generateMoreInNewFork(sessionId, msg.id)
+    // 先创建分支，保存消息，然后 on close，然后generate more
+    await sessionActions.createNewFork(msg.id)
+    await sessionActions.modifyMessage(sessionId, msg, true)
+    onClose()
+    await sessionActions.generateMore(sessionId, msg.id)
   }
 
   const onRoleSelect = (e: SelectChangeEvent) => {
