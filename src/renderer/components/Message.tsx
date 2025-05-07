@@ -576,7 +576,7 @@ const Message: FC<Props> = (props) => {
                             <div
                               className="w-[100px] min-w-[100px] h-[100px] min-h-[100px]
                                                     md:w-[200px] md:min-w-[200px] md:h-[200px] md:min-h-[200px]
-                                                    inline-flex items-center justify-center                                                                                                                                                  
+                                                    inline-flex items-center justify-center
                                                     hover:cursor-pointer hover:border-slate-800/20 transition-all duration-200"
                               onClick={() => showPicture(item.storageKey)}
                             >
@@ -703,17 +703,6 @@ const Message: FC<Props> = (props) => {
                         </Tooltip>
                       )
                     }
-                    {msg.role !== 'assistant' && (
-                      <Tooltip title={t('Reply Again Below')} placement="top">
-                        <IconButton
-                          aria-label="Reply Again Below"
-                          onClick={onGenerateMore}
-                          color={props.sessionType === 'picture' ? 'secondary' : 'primary'}
-                        >
-                          <SouthIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    )}
                     {
                       // Chatbox-AI 模型不支持编辑消息
                       !msg.model?.startsWith('Chatbox-AI') &&
