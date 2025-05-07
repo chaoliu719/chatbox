@@ -366,7 +366,7 @@ if (!gotTheLock) {
     .whenReady()
     .then(() => {
       createWindow()
-      ensureTray()
+      // ensureTray()
       // Remove this if your app does not use auto updates
       // eslint-disable-next-line
       app.on('activate', () => {
